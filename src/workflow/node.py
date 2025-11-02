@@ -1,24 +1,11 @@
-from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph,START,END
-from typing import TypedDict,Literal
+from workflow.state import llmState,product_structural
+from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import requests
-from pydantic import BaseModel, Field
-
+import os
 load_dotenv(override=True)
 
-model=ChatOpenAI(model="gpt-4o-mini")
-
-class llmState(TypedDict):
-    question :str
-    answer:str
-    product :str
-
-class product_structural(BaseModel):
-    product:str = Field(..., description="product to search for make is singular exampled 'pant' not 'pants' ")
-
-class question_conditional(BaseModel):
-    result: Literal["product", "company"]
+model=ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 
 def comapany_detail(state:llmState):
     question=state['question']  
@@ -52,7 +39,7 @@ def product_node(state:llmState):
     result = llm.invoke(prompt)
     state['product'] = result.product
     product=state['product']
-    response = requests.get("http://127.0.0.1:8000/api/products/?search={}".format(product))
+    response = requests.get(f"{os.getenv('HOST')}/api/products/?search={product}")
     if response.status_code == 200:
         products = response.json()
         return {"product":products}
@@ -71,33 +58,3 @@ def product_answer_node(state:llmState):
     state['answer']=answer
 
     return {"answer":state['answer']}
-
-
-def question_conditional_edge(state:llmState) -> Literal["product_node", "company_detail"]:
-    question=state['question']
-    prompt= f"find the user question is about product or about general company detail: {question}"
-    model=ChatOpenAI()
-    llm=model.with_structured_output(question_conditional)
-    result = llm.invoke(prompt)
-
-    if "product" in result.result:
-        return "product_node"
-    elif "company" in result.result:
-        return "company_detail"
-    else:
-        return "company_detail"
-
-
-graph=StateGraph(llmState)
-
-graph.add_node("company_detail",comapany_detail)
-graph.add_node("product_node",product_node)
-graph.add_node("product_answer_node",product_answer_node)
-
-graph.add_conditional_edges(START,question_conditional_edge)
-graph.add_edge("product_node","product_answer_node")
-graph.add_edge("product_answer_node",END)
-graph.add_edge("company_detail",END)
-
-workflow = graph.compile()
-
